@@ -100,7 +100,7 @@ body.mini .phase-sub { font-size: 10.5px; }
   <header>
     <div>
       <h1>NeuroGrip · Assembly</h1>
-      <p class="sub">The robotic hand from its CAD assembly. It first builds itself up as an X-ray scan, a blueprint and then a solid model. The palm stays fixed while the five fingers come back and lock into place, the servos and pulleys appear at the very end, and then the hand makes one full turn around its center.</p>
+      <p class="sub">The robotic hand from its CAD assembly. It first draws itself as a blueprint, then fades into the solid model. The palm stays fixed while the five fingers come back and lock into place, the servos and pulleys appear at the very end, and then the hand makes one full turn around its center.</p>
     </div>
   </header>
 
@@ -143,9 +143,8 @@ const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ---------- timeline (seconds) ----------
 const PH = [
-  {id:"scan", name:"Building the model", sub:"X-ray scan",               label:"X-ray",      dur:1.5},
-  {id:"bp",   name:"Building the model", sub:"Blueprint",                label:"Blueprint",  dur:1.1},
-  {id:"sol",  name:"Building the model", sub:"Solid model",              label:"Solid",      dur:1.1},
+  {id:"bp",   name:"Building the model", sub:"Blueprint",                label:"Blueprint",  dur:1.5},
+  {id:"sol",  name:"Building the model", sub:"Solid model",              label:"Solid",      dur:1.3},
   {id:"ex",   name:"Before assembly", sub:"Exploded view",               label:"Exploded",   dur:0.7},
   {id:"asm",  name:"Assembling",      sub:"Fingers return, servos and pulleys last",       label:"Assembly",   dur:3.0},
   {id:"spin", name:"Turntable",       sub:"One turn around its center",  label:"360°",       dur:2.6},
@@ -191,7 +190,7 @@ function init(){
   rotAbout = (p, d, ang) => { const m = new THREE.Matrix4().makeTranslation(p.x,p.y,p.z); m.multiply(new THREE.Matrix4().makeRotationAxis(d, ang)); m.multiply(new THREE.Matrix4().makeTranslation(-p.x,-p.y,-p.z)); return m; };
   planar = (F,c3,c2,th) => { const [e1,e2] = F._e, c = F._to2(c3), d = sub(c2,c);
     return new THREE.Matrix4().makeTranslation(e1.x*d[0]+e2.x*d[1], e1.y*d[0]+e2.y*d[1], e1.z*d[0]+e2.z*d[1]).multiply(rotAbout(c3,F._k,th)); };
-  renderer = new THREE.WebGLRenderer({canvas: hand, antialias: true, alpha: true}); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.localClippingEnabled = true;
+  renderer = new THREE.WebGLRenderer({canvas: hand, antialias: true, alpha: true}); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(30, 1, 1, 8000); camera.up.set(0,0,1);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2f38, .8));
@@ -289,19 +288,9 @@ async function load(){
   const reach = off => Math.max(...parts.filter(P => P.group !== "servo").map(P => P.w.clone().add(P.dir ? P.dir.clone().multiplyScalar(P.dist*off) : new THREE.Vector3()).sub(C).length()));
   EX = {c: C, ratio: reach(1) / reach(0)};
   parts.forEach(P => P.solidMat = P.mesh.material);
-  // build-up intro: a second copy of each part (to show two styles split at the scan line), outlines, scan plane and height range
+  // build-up intro: outlines, plus a second copy of each part so the outline fill and the solid can cross-fade
   buildEdges();
   parts.forEach(P => { const gh = new THREE.Mesh(P.mesh.geometry, P.mesh.material); gh.visible = false; P.mesh.add(gh); P.ghost = gh; });
-  CLIP_BELOW = new THREE.Plane(new THREE.Vector3(0,0,-1), 0); CLIP_ABOVE = new THREE.Plane(new THREE.Vector3(0,0,1), 0);
-  FX = {rec: null, shake: null}; poseParts(0, 0, true);
-  let z0 = 1e9, z1 = -1e9, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
-  parts.filter(P => P.group !== "servo").forEach(P => { const a = P.verts, e = P.mesh.matrix.elements;
-    for (let q = 0; q < a.length; q += 30) { const x = a[q], y = a[q+1], z = a[q+2];
-      const X = e[0]*x+e[4]*y+e[8]*z+e[12], Y = e[1]*x+e[5]*y+e[9]*z+e[13], Z = e[2]*x+e[6]*y+e[10]*z+e[14];
-      z0 = Math.min(z0,Z); z1 = Math.max(z1,Z); x0 = Math.min(x0,X); x1 = Math.max(x1,X); y0 = Math.min(y0,Y); y1 = Math.max(y1,Y); } });
-  ZR = [z0, z1]; const span = Math.max(x1-x0, y1-y0) * 1.25;
-  scanner = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({color: "#4dd0e1", transparent: true, opacity: .22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide}));
-  scanner.matrixAutoUpdate = false; scanner.visible = false; scanner.userData = {cx: (x0+x1)/2, cy: (y0+y1)/2, s: span}; scene.add(scanner);
   ready = true; document.getElementById("loading").hidden = true;
   setView(view);
   buildFacts(counts);
@@ -365,7 +354,7 @@ function frameState(tt){
   // returns {g (explosion 0..1 global), assembling, spin, dist, pitch}
   const P = phaseAt(tt), u = clamp((tt - P.t0) / P.dur);
   let g = 0, assembling = true, spin = 0, dz = 1, pt = .12;
-  if (P.id === "scan" || P.id === "bp" || P.id === "sol") { g = 1; dz = .9; }
+  if (P.id === "bp" || P.id === "sol") { g = 1; dz = .9; }
   if (P.id === "ex")   { g = 1; dz = .9 - .03*u; }
   if (P.id === "asm")  { g = 1 - u; dz = .9 - .02*ease(u); }
     if (P.id === "spin") { const e = SPIN(u);                                         // fast, slow, then super fast
@@ -409,35 +398,32 @@ function viewMat(v, tint){
   return matCache[key] = m;
 }
 let edgeMat = null, edgesReady = false;
-// ---------- build-up intro: X-ray → blueprint → solid, revealed by a rising scan plane ----------
-let CLIP_BELOW = null, CLIP_ABOVE = null, ZR = [0, 1], scanner = null, introOn = false, introClass = "";
-const clipped = new Set();
+// ---------- build-up intro: blueprint outlines draw in, then the solid model fades in over them ----------
+let introOn = false, fillMat = null;
+const fadeCache = new Map();
 const styleMat = (st, P) => st === "solid" ? P.solidMat : viewMat(st, P.tint);
-function clip(m, plane){ if (!m) return; const want = plane ? 1 : 0; if ((m.clippingPlanes || []).length !== want || (plane && m.clippingPlanes[0] !== plane)) m.clippingPlanes = plane ? [plane] : []; clipped.add(m); }
+function fadeOf(m){ let c = fadeCache.get(m); if (!c) { c = m.clone(); c.transparent = true; c.userData = {base: m.transparent ? m.opacity : 1}; fadeCache.set(m, c); } return c; }
 function intro(S){
-  const id = S.P.id, on = !hold && (id === "scan" || id === "bp" || id === "sol");
+  const id = S.P.id, on = !hold && (id === "bp" || id === "sol");
   if (!on) { if (introOn) endIntro(); return; }
   introOn = true;
-  const H = ZR[1] - ZR[0], h = ZR[0] - .04*H + 1.08*H*ease(S.u);
-  CLIP_BELOW.constant = h; CLIP_ABOVE.constant = -h;
-  let A = id === "scan" ? "xray" : id === "bp" ? "blueprint" : view, B = id === "scan" ? null : id === "bp" ? "xray" : "blueprint";
-  if (A === B) B = null;
-  clipped.forEach(m => m.clippingPlanes = []); clipped.clear();
-  parts.forEach(P => {
-    const mA = styleMat(A, P); P.mesh.material = mA; clip(mA, CLIP_BELOW);
-    if (B) { const mB = styleMat(B, P); P.ghost.material = mB; clip(mB, CLIP_ABOVE); P.ghost.visible = true; } else P.ghost.visible = false;
-    P.edges.visible = A === "blueprint" || B === "blueprint";
-  });
-  clip(edgeMat, A === "blueprint" ? CLIP_BELOW : CLIP_ABOVE);
-  const cls = "stage v-" + A; if (cls !== introClass) { document.querySelector(".stage").className = cls; introClass = cls; }
-  const d = scanner.userData; scanner.visible = true;
-  scanner.material.opacity = .26 * Math.sin(Math.PI * clamp(S.u * 1.05));
-  scanner.matrix.copy(new THREE.Matrix4().makeTranslation(d.cx, d.cy, h).multiply(new THREE.Matrix4().makeScale(d.s, d.s, 1)));
+  if (!fillMat) fillMat = new THREE.MeshBasicMaterial({color: "#141a24", transparent: true, opacity: 0, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1});
+  edgeMat.transparent = true;
+  if (id === "bp") {                                   // outlines appear from nothing
+    const e = ease(S.u);
+    edgeMat.opacity = e; fillMat.opacity = .92 * e;
+    parts.forEach(P => { P.mesh.material = fillMat; P.ghost.visible = false; P.edges.visible = true; });
+  } else {                                             // solid fades in, outlines fade out
+    const e = ease(S.u);
+    edgeMat.opacity = 1 - e; fillMat.opacity = .92 * (1 - e);
+    parts.forEach(P => { const f = fadeOf(styleMat(view, P)); f.opacity = f.userData.base * e; f.depthWrite = e > .5;
+      P.mesh.material = f; P.ghost.material = fillMat; P.ghost.visible = true; P.edges.visible = true; });
+  }
 }
 function endIntro(){
-  introOn = false; introClass = "";
-  clipped.forEach(m => m.clippingPlanes = []); clipped.clear();
-  parts.forEach(P => P.ghost.visible = false); scanner.visible = false;
+  introOn = false;
+  edgeMat.opacity = 1; edgeMat.transparent = false;
+  parts.forEach(P => { P.ghost.visible = false; P.edges.visible = false; });
   setView(view);
 }
 function buildEdges(){
