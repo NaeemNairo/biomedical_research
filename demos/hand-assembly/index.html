@@ -102,7 +102,18 @@ body.mini .phase-sub { font-size: 10.5px; }
 .flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(circle at 50% 50%, rgba(170,238,255,.32), rgba(77,208,225,.08) 35%, transparent 65%); }
 .flash.go { animation: ng-flash .7s ease-out; }
 @keyframes ng-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .seg i { transition: none; } .pulse.go, .flash.go { animation: none; } }
+.ground, .dust { position: absolute; left: 50%; top: var(--gy, 80%); width: 80px; height: 80px; margin: -40px 0 0 -40px; border-radius: 50%; pointer-events: none; opacity: 0; }
+.ground { border: 2px solid transparent; }
+.ground.go { animation: ng-ground 1.1s cubic-bezier(.15,.7,.25,1); }
+@keyframes ng-ground { 0% { opacity: 1; transform: scale(.4,.1); border-color: rgba(200,245,255,.95); box-shadow: 0 0 34px 8px rgba(77,208,225,.55); }
+  100% { opacity: 0; transform: scale(11,2.4); border-color: rgba(77,208,225,0); box-shadow: 0 0 0 0 rgba(77,208,225,0); } }
+.dust { background: radial-gradient(ellipse at center, rgba(205,220,235,.42), rgba(150,170,190,.12) 45%, transparent 70%); filter: blur(3px); }
+.dust.go { animation: ng-dust 1.3s ease-out; }
+@keyframes ng-dust { 0% { opacity: .9; transform: scale(.5,.12); } 100% { opacity: 0; transform: scale(8,1.7); } }
+/* hologram: scanlines over the stage and a red/blue split on glitch frames */
+.scan { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: repeating-linear-gradient(0deg, rgba(95,227,245,.09) 0 1px, transparent 1px 4px); }
+canvas.rgb { filter: drop-shadow(5px 0 0 rgba(255,40,100,.55)) drop-shadow(-5px 0 0 rgba(40,210,255,.55)); }
+@media (prefers-reduced-motion: reduce) { .seg i { transition: none; } .pulse.go, .flash.go, .ground.go, .dust.go { animation: none; } }
 </style>
 </head>
 <body>
@@ -111,7 +122,7 @@ body.mini .phase-sub { font-size: 10.5px; }
   <header>
     <div>
       <h1>NeuroGrip · Assembly</h1>
-      <p class="sub">The robotic hand from its CAD assembly. It first draws itself as a blueprint, then fades into the solid model. The palm stays fixed while the five fingers come back and lock into place, the servos and pulleys appear at the very end, and then the hand makes one full turn around its center.</p>
+      <p class="sub">The robotic hand from its CAD assembly. It first builds itself in (pick an intro style under the player), then turns into the solid model. The palm stays fixed while the five fingers come back and lock into place, the servos and pulleys appear at the very end, and then the hand makes one full turn around its center.</p>
     </div>
   </header>
 
@@ -120,7 +131,7 @@ body.mini .phase-sub { font-size: 10.5px; }
     <div class="hud"><div class="phase" id="phase">Before assembly</div><div class="phase-sub" id="phaseSub">Exploded view</div></div>
     <div class="cap">CAD assembly · drag to look around</div>
     <div class="legend"><span style="--c:#c9cfd8">printed parts</span><span style="--c:var(--pulley)">bend pulleys</span><span style="--c:var(--servo)">side servos</span><span style="--c:var(--wrist)">wrist servo</span><span style="--c:var(--pcb)">electronics</span></div>
-    <div class="flash" id="flash"></div><div class="pulse" id="pulse"></div>
+    <div class="scan" id="scan"></div><div class="flash" id="flash"></div><div class="pulse" id="pulse"></div><div class="dust" id="dust"></div><div class="ground" id="ground"></div>
     <div class="loading" id="loading">Loading 3D model…</div>
   </section>
 
@@ -141,6 +152,15 @@ body.mini .phase-sub { font-size: 10.5px; }
     <button data-view="clay" aria-pressed="false">Clay</button>
     <button data-view="normals" aria-pressed="false">Normals</button>
     <span class="views-note" id="viewNote">Shaded CAD materials</span>
+  </div>
+  <div class="views" role="group" aria-label="Intro style">
+    <span class="views-label">Intro</span>
+    <button data-intro="fly" class="on" aria-pressed="true">Fly-in</button>
+    <button data-intro="laser" aria-pressed="false">Laser draw</button>
+    <button data-intro="particles" aria-pressed="false">Particles</button>
+    <button data-intro="holo" aria-pressed="false">Hologram</button>
+    <button data-intro="drop" aria-pressed="false">Slam drop</button>
+    <span class="views-note" id="introNote"></span>
   </div>
 
   <section class="facts" id="facts" aria-label="Parts in the assembly"></section>
@@ -166,6 +186,15 @@ let T0 = 0; PH.forEach(p => { p.t0 = T0; T0 += p.dur; p.t1 = T0; }); const TOTAL
 const ease = u => u < .5 ? 4*u*u*u : 1 - Math.pow(-2*u + 2, 3) / 2;           // cubic in-out
 const easeOutBack = u => { const c1 = 1.7, c3 = c1 + 1; return 1 + c3*Math.pow(u-1,3) + c1*Math.pow(u-1,2); };
 const clamp = (x,a=0,b=1) => Math.max(a, Math.min(b, x));
+const hrand = n => { const x = Math.sin(n*127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };   // repeatable noise, so scrubbing looks the same
+// intro styles (the first two timeline phases)
+const INTROS = {fly: {sub: "Blueprint", note: "Twists in from a speck, overshoots, lands with a shockwave"},
+  laser: {sub: "Laser trace", sol: "Filling from the base", note: "Outlines trace part by part, then the solid fills in from the base up"},
+  particles: {sub: "Particles", note: "Glowing points stream in and condense into the hand"},
+  holo: {sub: "Hologram", sol: "Locking in", note: "Flickers in like a hologram, then locks into the solid model"},
+  drop: {sub: "Drop", note: "Falls from above and slams down with a ground shockwave"}};
+let introMode = "fly";
+if (!document.body.classList.contains("mini")) { try { const v = localStorage.getItem("ng-intro"); if (INTROS[v]) introMode = v; } catch (e) {} }
 // turntable speed: quick first burst, a slow drift, then a much faster finish that brakes hard at 360°
 const SPIN = (() => { const N = 400, v = [], F = [0]; const bump = (u,c,w) => Math.exp(-(((u-c)/w)**2));
   const ss = (a,b,x) => { const t = clamp((x-a)/(b-a)); return t*t*(3-2*t); };
@@ -202,7 +231,7 @@ function init(){
   rotAbout = (p, d, ang) => { const m = new THREE.Matrix4().makeTranslation(p.x,p.y,p.z); m.multiply(new THREE.Matrix4().makeRotationAxis(d, ang)); m.multiply(new THREE.Matrix4().makeTranslation(-p.x,-p.y,-p.z)); return m; };
   planar = (F,c3,c2,th) => { const [e1,e2] = F._e, c = F._to2(c3), d = sub(c2,c);
     return new THREE.Matrix4().makeTranslation(e1.x*d[0]+e2.x*d[1], e1.y*d[0]+e2.y*d[1], e1.z*d[0]+e2.z*d[1]).multiply(rotAbout(c3,F._k,th)); };
-  renderer = new THREE.WebGLRenderer({canvas: hand, antialias: true, alpha: true}); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer = new THREE.WebGLRenderer({canvas: hand, antialias: true, alpha: true}); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.localClippingEnabled = true;
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(30, 1, 1, 8000); camera.up.set(0,0,1);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2f38, .8));
@@ -303,6 +332,7 @@ async function load(){
   // build-up intro: outlines, plus a second copy of each part so the outline fill and the solid can cross-fade
   buildEdges();
   parts.forEach(P => { const gh = new THREE.Mesh(P.mesh.geometry, P.mesh.material); gh.visible = false; P.mesh.add(gh); P.ghost = gh; });
+  poseParts(0, 0, true, 1); introGeo(); buildParticles();
   ready = true; document.getElementById("loading").hidden = true;
   setView(view);
   buildFacts(counts);
@@ -319,12 +349,15 @@ function impactFx(){
 function hit(I){ hits.push({t0: clock, dir: I.dir, mat: I.mat, str: I.str, ph: Math.random()*6.28}); }
 let FX = {rec: null, shake: null};
 // a = assembly progress: 0 = exploded, 1 = assembled. Running it backwards disassembles in reverse order.
-function poseParts(a, spin, assembling, scale = 1){
+function poseParts(a, spin, assembling, scale = 1, X = null){
   const rec = FX.rec || new THREE.Vector3();
-  const G = new THREE.Matrix4().makeTranslation(rec.x, rec.y, rec.z).multiply(new THREE.Matrix4().makeTranslation(PIV.x, PIV.y, PIV.z))
+  let ox = 0, oy = 0, oz = 0, sx = scale, sz = scale, pz = PIV.z;
+  if (X) { const yw = yaw + userYaw; ox = -Math.sin(yw) * (X.jx || 0) * R; oy = Math.cos(yw) * (X.jx || 0) * R; oz = (X.lift || 0) * R;   // jitter along the screen, lift straight up
+    if (X.sq) { sx = scale * (1 + X.sq * .5); sz = scale * (1 - X.sq); pz = IG ? IG.zLo : PIV.z; } }                                    // squash against the floor
+  const G = new THREE.Matrix4().makeTranslation(rec.x + ox, rec.y + oy, rec.z + oz).multiply(new THREE.Matrix4().makeTranslation(PIV.x, PIV.y, pz))
     .multiply(new THREE.Matrix4().makeRotationZ(spin))
-    .multiply(new THREE.Matrix4().makeScale(scale, scale, scale))
-    .multiply(new THREE.Matrix4().makeTranslation(-PIV.x, -PIV.y, -PIV.z))
+    .multiply(new THREE.Matrix4().makeScale(sx, sx, sz))
+    .multiply(new THREE.Matrix4().makeTranslation(-PIV.x, -PIV.y, -pz))
     .multiply(UPRIGHT);                                               // spin about the hand's own vertical axis
   for (const P of parts) {
     const M = G.clone();
@@ -366,9 +399,16 @@ function phaseAt(tt){ return PH.find(p => tt < p.t1) || PH[PH.length-1]; }
 function frameState(tt){
   // returns {g (explosion 0..1 global), assembling, spin, dist, pitch}
   const P = phaseAt(tt), u = clamp((tt - P.t0) / P.dur);
-  let g = 0, assembling = true, spin = 0, dz = 1, pt = .12, scale = 1;
-  if (P.id === "bp")   { g = 1; dz = .9; const v = clamp(u / .62), z = easeOutBack(v);          // rushes in, overshoots, snaps back
+  let g = 0, assembling = true, spin = 0, dz = 1, pt = .12, scale = 1, X = null, flick = false, rgb = false;
+  if (P.id === "bp")   { g = 1; dz = .9;
+    if (introMode === "fly") { const v = clamp(u / .62), z = easeOutBack(v);                 // rushes in, overshoots, snaps back
                          scale = .02 + .98 * z; spin = -2.2 * Math.pow(1 - v, 3); }
+    if (introMode === "drop") { const v = clamp(u / .55), w = clamp((u - .55) / .45);        // falls with gravity, then squash and rebound
+                         X = {lift: 3.4 * (1 - v*v), sq: u < .55 ? 0 : .16 * Math.exp(-5*w) * Math.cos(w*16)}; spin = .5 * Math.pow(1 - v, 2); } }
+  if (introMode === "holo" && (P.id === "bp" || P.id === "sol")) {                           // glitches die down as it locks in
+    const G = P.id === "bp" ? .35 + .65*(1 - u) : Math.max(0, .6*(1 - u/.5)), n = Math.floor(tt * 20);
+    flick = hrand(n) < .3*G; rgb = hrand(n + 5) < .6*G;
+    X = {jx: hrand(n + 9) < .45*G ? (hrand(n + 3) - .5) * .32 * G : 0}; }
   if (P.id === "sol")  { g = 1; dz = .9; }
   if (P.id === "ex")   { g = 1; dz = .9 - .03*u; }
   if (P.id === "asm")  { g = 1 - u; dz = .9 - .02*ease(u); }
@@ -378,7 +418,7 @@ function frameState(tt){
                          pt = .12; }
   if (P.id === "rest") { g = 0; dz = .96; }
   if (P.id === "back") { g = ease(u); assembling = false; dz = .96 - .04*ease(u); }
-  return {P, u, g, assembling, spin, dz, pt, scale};
+  return {P, u, g, assembling, spin, dz, pt, scale, X, flick, rgb};
 }
 function apply(tt){
   const S = hold === "ex" ? {P:PH.find(p => p.id === "ex"), g:1, assembling:true, spin:0, dz:.9, pt:.12}
@@ -389,7 +429,7 @@ function apply(tt){
   if (prevA !== null && S.P.id === "spin" && !hold && playing && prevSpin < Math.PI*2 - .01 && S.spin >= Math.PI*2 - .01) hit({dir: null, mat: null, str: .45});
   prevA = a; prevSpin = S.P.id === "spin" ? S.spin : 0;
   FX = impactFx();
-  poseParts(a, S.spin, S.assembling, S.scale || 1);
+  poseParts(a, S.spin, S.assembling, S.scale || 1, S.X);
   intro(S);
   const zoom = S.dz * (1 + (EX.ratio - 1) * S.g * .9);          // zoom out to fit the exploded spread
   dist += (zoom - dist) * (dist ? .12 : 1); pitch += (S.pt - pitch) * .12; camG += (S.g - camG) * (camG ? .12 : 1);
@@ -417,40 +457,98 @@ let edgeMat = null, edgesReady = false;
 let introOn = false, fillMat = null, lastFx = {bp: 0, sol: 0};
 function mixHex(a, b, t){ const A = [1,3,5].map(i => parseInt(a.slice(i,i+2),16)), B = [1,3,5].map(i => parseInt(b.slice(i,i+2),16));
   return "#" + A.map((v,i) => Math.round(v + (B[i]-v)*t).toString(16).padStart(2,"0")).join(""); }
+function restart(el){ el.classList.remove("go"); void el.offsetWidth; el.classList.add("go"); }
 function burst(small){ const p = document.getElementById("pulse"), f = document.getElementById("flash");
-  p.classList.toggle("small", !!small); [p, f].forEach(el => { el.classList.remove("go"); void el.offsetWidth; el.classList.add("go"); }); if (small) f.classList.remove("go"); }
+  p.classList.toggle("small", !!small); restart(p); if (!small) restart(f); }
+function groundBurst(){                                  // ring and dust where the hand meets the floor
+  const g = document.getElementById("ground"), d = document.getElementById("dust");
+  try { const v = new THREE.Vector3(PIV.x, PIV.y, IG.zLo).project(camera); if (isFinite(v.y)) { const y = (1 - (v.y + 1)/2) * 100 + "%"; g.style.setProperty("--gy", y); d.style.setProperty("--gy", y); } } catch (e) {}
+  [g, d, document.getElementById("flash")].forEach(restart); }
 const fadeCache = new Map();
 const styleMat = (st, P) => st === "solid" ? P.solidMat : viewMat(st, P.tint);
 function fadeOf(m){ let c = fadeCache.get(m); if (!c) { c = m.clone(); c.transparent = true; c.userData = {base: m.transparent ? m.opacity : 1}; fadeCache.set(m, c); } return c; }
+// height of every part in the intro pose, for the laser order and the rising fill line
+let IG = null, PTS = null, clipDown = null, clipUp = null;
+function introGeo(){
+  let lo = 1e9, hi = -1e9;
+  parts.forEach(P => { const e = P.mesh.matrix.elements, c = P.c, a = P.verts; P.wz = e[2]*c.x + e[6]*c.y + e[10]*c.z + e[14];
+    if (P.group === "servo") return;
+    for (let q = 0; q < a.length; q += 9) { const z = e[2]*a[q] + e[6]*a[q+1] + e[10]*a[q+2] + e[14]; if (z < lo) lo = z; if (z > hi) hi = z; } });
+  parts.forEach(P => P.h = clamp((P.wz - lo) / (hi - lo)));
+  IG = {zLo: lo, zHi: hi};
+  clipDown = new THREE.Plane(new THREE.Vector3(0, 0, -1), lo); clipUp = new THREE.Plane(new THREE.Vector3(0, 0, 1), -lo);
+}
+// particles: points sampled from the hand's surface, each flying in from a random spot around it
+function buildParticles(){
+  const list = parts.filter(P => P.group !== "servo"); let tot = 0; list.forEach(P => tot += P.verts.length / 3);
+  const st = Math.max(1, Math.floor(tot / 9000)), tg = [];
+  list.forEach(P => { const e = P.mesh.matrix.elements, a = P.verts;
+    for (let q = 0; q < a.length; q += 3*st) { const x = a[q], y = a[q+1], z = a[q+2];
+      tg.push(e[0]*x + e[4]*y + e[8]*z + e[12], e[1]*x + e[5]*y + e[9]*z + e[13], e[2]*x + e[6]*y + e[10]*z + e[14]); } });
+  const n = tg.length / 3, from = new Float32Array(n*3), dl = new Float32Array(n), pos = new Float32Array(n*3);
+  for (let i = 0; i < n; i++) { const zz = 2*hrand(i*3 + 1) - 1, ph = 6.2832*hrand(i*3 + 2), rr = Math.sqrt(1 - zz*zz), d = R * (2 + 1.8*hrand(i*7 + 5));
+    from[i*3] = PIV.x + rr*Math.cos(ph)*d; from[i*3+1] = PIV.y + rr*Math.sin(ph)*d; from[i*3+2] = PIV.z + zz*d; dl[i] = .32 * hrand(i*13 + 2); }
+  const g = new THREE.BufferGeometry(), attr = new THREE.BufferAttribute(pos, 3); g.setAttribute("position", attr);
+  const mat = new THREE.PointsMaterial({color: "#8ff4ff", size: R * .016, sizeAttenuation: true, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending});
+  const pts = new THREE.Points(g, mat); pts.visible = false; pts.frustumCulled = false; scene.add(pts);
+  PTS = {pts, mat, attr, pos, tg: new Float32Array(tg), from, dl, n};
+}
+function updateParticles(u){
+  const {pos, tg, from, dl, n} = PTS;
+  for (let i = 0; i < n; i++) { const p = clamp((u - dl[i]) / .5), e = 1 - Math.pow(1 - p, 3), ang = (1 - e) * 2.4, c = Math.cos(ang), sn = Math.sin(ang);
+    const fx = from[i*3] - PIV.x, fy = from[i*3+1] - PIV.y, rx = PIV.x + fx*c - fy*sn, ry = PIV.y + fx*sn + fy*c;   // swirl in
+    pos[i*3] = rx + (tg[i*3] - rx)*e; pos[i*3+1] = ry + (tg[i*3+1] - ry)*e; pos[i*3+2] = from[i*3+2] + (tg[i*3+2] - from[i*3+2])*e; }
+  PTS.attr.needsUpdate = true;
+}
+function setDraw(P, k){ const g = P.edges.geometry, pa = g.attributes ? g.attributes.position : g.position, n = pa.count != null ? pa.count : pa.array.length / 3;
+  if (g.setDrawRange) g.setDrawRange(0, k >= 1 ? Infinity : Math.floor(k * n / 2) * 2); }
+// moments that fire a ring or flash, per intro style: [phase, progress, kind]
+const FXAT = {fly: [["bp", .62, "big"], ["sol", .12, "small"]], laser: [["bp", .93, "small"]], particles: [["bp", .8, "big"], ["sol", .12, "small"]],
+  holo: [["sol", .45, "small"]], drop: [["bp", .55, "ground"], ["sol", .12, "small"]]};
+const scanEl = document.getElementById("scan");
 function intro(S){
   const id = S.P.id, on = !hold && (id === "bp" || id === "sol");
   if (!on) { if (introOn) endIntro(); lastFx = {bp: 0, sol: 0}; return; }
-  introOn = true;
-  if (playing && !scrub) {
-    if (id === "bp" && lastFx.bp < .62 && S.u >= .62) burst(false);
-    if (id === "sol" && lastFx.sol < .12 && S.u >= .12) burst(true);
-  }
+  introOn = true; const M = introMode;
+  if (playing && !scrub) FXAT[M].forEach(([pid, at, k]) => { if (id === pid && lastFx[pid] < at && S.u >= at) k === "ground" ? groundBurst() : burst(k === "small"); });
   lastFx[id] = S.u;
   if (!fillMat) fillMat = new THREE.MeshBasicMaterial({color: "#141a24", transparent: true, opacity: 0, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1});
   edgeMat.transparent = true;
-  if (id === "bp") {                                   // outlines appear from nothing
-    const e = clamp(S.u * 4), land = clamp((S.u - .62) / .25);
-    edgeMat.opacity = e; fillMat.opacity = .92 * e;
-    edgeMat.color.set(S.u < .62 ? "#5fe3f5" : mixHex("#ffffff", "#d6ebff", land));
-    parts.forEach(P => { P.mesh.material = fillMat; P.ghost.visible = false; P.edges.visible = true; });
+  const clip = M === "laser" && id === "sol";
+  edgeMat.clippingPlanes = clip ? [clipUp] : []; fillMat.clippingPlanes = clip ? [clipUp] : [];
+  PTS.pts.visible = M === "particles";
+  scanEl.style.opacity = M !== "holo" ? 0 : id === "bp" ? .9 : .9 * (1 - clamp(S.u / .7));
+  hand.classList.toggle("rgb", M === "holo" && !!S.rgb);
+  if (id === "bp") {
+    let e = clamp(S.u * 4), fill = .92, col = "#5fe3f5";
+    if (M === "fly" || M === "drop") { const L = M === "fly" ? .62 : .55; if (S.u >= L) col = mixHex("#ffffff", "#d6ebff", clamp((S.u - L) / .25)); }
+    if (M === "laser") { e = 1; fill = .92 * clamp((S.u - .15) / .6); col = S.u < .85 ? "#7ff3ff" : mixHex("#7ff3ff", "#d6ebff", clamp((S.u - .85) / .15)); }
+    if (M === "holo") { e = clamp(S.u * 3) * (S.flick ? .25 : 1); fill = .6; }
+    if (M === "particles") { e = clamp((S.u - .72) / .2); col = mixHex("#ffffff", "#d6ebff", clamp((S.u - .8) / .2)); updateParticles(S.u); PTS.mat.opacity = 1; }
+    edgeMat.opacity = e; fillMat.opacity = M === "laser" ? fill : fill * e;
+    edgeMat.color.set(col);
+    parts.forEach(P => { P.mesh.material = fillMat; P.ghost.visible = false; P.edges.visible = true;
+      setDraw(P, M === "laser" ? clamp((S.u - P.h * .55) / .35) : 1); });
   } else {                                             // solid fades in, outlines fade out
-    const e = ease(S.u);
-    edgeMat.opacity = 1 - e; fillMat.opacity = .92 * (1 - e);
-    const glow = Math.pow(1 - clamp(S.u / .8), 2);
-    parts.forEach(P => { const f = fadeOf(styleMat(view, P)); f.opacity = f.userData.base * e; f.depthWrite = e > .5;
+    let e = ease(S.u), glow = Math.pow(1 - clamp(S.u / .8), 2);
+    if (M === "holo" && S.flick) e *= .35;
+    if (M === "laser") {                               // a fill line rises from the wrist to the fingertips
+      const hgt = IG.zLo - .02*(IG.zHi - IG.zLo) + 1.04*(IG.zHi - IG.zLo)*ease(clamp(S.u / .85));
+      clipDown.constant = hgt; clipUp.constant = -hgt; e = 1; glow = .7 * (1 - clamp(S.u)); edgeMat.color.set("#7ff3ff");
+    }
+    if (M === "particles") { updateParticles(1); PTS.mat.opacity = 1 - clamp(S.u / .6); }
+    edgeMat.opacity = M === "laser" ? 1 : 1 - e; fillMat.opacity = .92 * (M === "laser" ? 1 : 1 - e);
+    parts.forEach(P => { const f = fadeOf(styleMat(view, P)); f.opacity = f.userData.base * e; f.depthWrite = e > .5; f.clippingPlanes = clip ? [clipDown] : [];
       if (f.emissive) { f.emissive.set("#4dd0e1"); f.emissiveIntensity = .9 * glow * e; }
-      P.mesh.material = f; P.ghost.material = fillMat; P.ghost.visible = true; P.edges.visible = true; });
+      P.mesh.material = f; P.ghost.material = fillMat; P.ghost.visible = true; P.edges.visible = true; setDraw(P, 1); });
   }
 }
 function endIntro(){
   introOn = false; edgeMat.color.set("#d6ebff");
-  edgeMat.opacity = 1; edgeMat.transparent = false;
-  parts.forEach(P => { P.ghost.visible = false; P.edges.visible = false; });
+  edgeMat.opacity = 1; edgeMat.transparent = false; edgeMat.clippingPlanes = []; if (fillMat) fillMat.clippingPlanes = [];
+  fadeCache.forEach(f => f.clippingPlanes = []);
+  if (PTS) PTS.pts.visible = false; scanEl.style.opacity = 0; hand.classList.remove("rgb");
+  parts.forEach(P => { P.ghost.visible = false; P.edges.visible = false; setDraw(P, 1); });
   setView(view);
 }
 function buildEdges(){
@@ -533,6 +631,15 @@ function frame(now){
   }
   requestAnimationFrame(frame);
 }
+function setIntro(m, replay){
+  introMode = m; if (!document.body.classList.contains("mini")) { try { localStorage.setItem("ng-intro", m); } catch (e) {} }
+  document.querySelectorAll("[data-intro]").forEach(b => { const on = b.dataset.intro === m; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+  document.getElementById("introNote").textContent = INTROS[m].note;
+  PH[0].sub = INTROS[m].sub; PH[1].sub = INTROS[m].sol || "Solid model";
+  if (replay) { if (introOn) endIntro(); lastFx = {bp: 0, sol: 0}; t = 0; hold = null; playing = true; userYaw = 0; userPitch = 0; syncBtns(); }
+}
+document.querySelectorAll("[data-intro]").forEach(b => b.addEventListener("click", () => setIntro(b.dataset.intro, true)));
+setIntro(introMode, false);
 syncBtns();
 if (reduce) { hold = "as"; syncBtns(); }
 load().catch(err => { document.getElementById("loading").textContent = "Could not load the 3D model: " + err.message; });
