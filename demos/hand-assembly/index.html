@@ -91,7 +91,18 @@ body.mini .phase-sub { font-size: 10.5px; }
   .legend, .cap { display: none; }
   .seg b { font-size: 9.5px; }
 }
-@media (prefers-reduced-motion: reduce) { .seg i { transition: none; } }
+/* reveal effects: shockwave ring and glow at the center of the stage */
+.pulse { position: absolute; left: 50%; top: 50%; width: 60px; height: 60px; margin: -30px 0 0 -30px; border-radius: 50%; border: 2px solid transparent; pointer-events: none; opacity: 0; }
+.pulse.go { animation: ng-pulse 1s cubic-bezier(.15,.7,.25,1); }
+.pulse.small.go { animation-duration: .8s; }
+@keyframes ng-pulse { 0% { opacity: 1; transform: scale(.15); border-color: rgba(160,235,255,.95); box-shadow: 0 0 40px 6px rgba(77,208,225,.55), inset 0 0 30px rgba(77,208,225,.45); }
+  100% { opacity: 0; transform: scale(16); border-color: rgba(77,208,225,0); box-shadow: 0 0 0 0 rgba(77,208,225,0), inset 0 0 0 rgba(77,208,225,0); } }
+.pulse.small.go { animation-name: ng-pulse-s; }
+@keyframes ng-pulse-s { 0% { opacity: .8; transform: scale(.3); border-color: rgba(77,208,225,.8); } 100% { opacity: 0; transform: scale(9); border-color: rgba(77,208,225,0); } }
+.flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(circle at 50% 50%, rgba(170,238,255,.32), rgba(77,208,225,.08) 35%, transparent 65%); }
+.flash.go { animation: ng-flash .7s ease-out; }
+@keyframes ng-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .seg i { transition: none; } .pulse.go, .flash.go { animation: none; } }
 </style>
 </head>
 <body>
@@ -109,6 +120,7 @@ body.mini .phase-sub { font-size: 10.5px; }
     <div class="hud"><div class="phase" id="phase">Before assembly</div><div class="phase-sub" id="phaseSub">Exploded view</div></div>
     <div class="cap">CAD assembly · drag to look around</div>
     <div class="legend"><span style="--c:#c9cfd8">printed parts</span><span style="--c:var(--pulley)">bend pulleys</span><span style="--c:var(--servo)">side servos</span><span style="--c:var(--wrist)">wrist servo</span><span style="--c:var(--pcb)">electronics</span></div>
+    <div class="flash" id="flash"></div><div class="pulse" id="pulse"></div>
     <div class="loading" id="loading">Loading 3D model…</div>
   </section>
 
@@ -152,7 +164,7 @@ const PH = [
   {id:"back", name:"Disassembling",   sub:"Fingers detach from the palm",   label:"Explode",    dur:1.76}];
 let T0 = 0; PH.forEach(p => { p.t0 = T0; T0 += p.dur; p.t1 = T0; }); const TOTAL = T0;
 const ease = u => u < .5 ? 4*u*u*u : 1 - Math.pow(-2*u + 2, 3) / 2;           // cubic in-out
-const easeOutBack = u => { const c1 = 1.25, c3 = c1 + 1; return 1 + c3*Math.pow(u-1,3) + c1*Math.pow(u-1,2); };
+const easeOutBack = u => { const c1 = 1.7, c3 = c1 + 1; return 1 + c3*Math.pow(u-1,3) + c1*Math.pow(u-1,2); };
 const clamp = (x,a=0,b=1) => Math.max(a, Math.min(b, x));
 // turntable speed: quick first burst, a slow drift, then a much faster finish that brakes hard at 360°
 const SPIN = (() => { const N = 400, v = [], F = [0]; const bump = (u,c,w) => Math.exp(-(((u-c)/w)**2));
@@ -355,8 +367,8 @@ function frameState(tt){
   // returns {g (explosion 0..1 global), assembling, spin, dist, pitch}
   const P = phaseAt(tt), u = clamp((tt - P.t0) / P.dur);
   let g = 0, assembling = true, spin = 0, dz = 1, pt = .12, scale = 1;
-  if (P.id === "bp")   { g = 1; dz = .9; const z = 1 - Math.pow(1 - clamp(u / .75), 4);     // rushes in, then settles
-                         scale = .02 + .98 * z; spin = -1.1 * Math.pow(1 - z, 2); }
+  if (P.id === "bp")   { g = 1; dz = .9; const v = clamp(u / .62), z = easeOutBack(v);          // rushes in, overshoots, snaps back
+                         scale = .02 + .98 * z; spin = -2.2 * Math.pow(1 - v, 3); }
   if (P.id === "sol")  { g = 1; dz = .9; }
   if (P.id === "ex")   { g = 1; dz = .9 - .03*u; }
   if (P.id === "asm")  { g = 1 - u; dz = .9 - .02*ease(u); }
@@ -402,29 +414,41 @@ function viewMat(v, tint){
 }
 let edgeMat = null, edgesReady = false;
 // ---------- build-up intro: blueprint outlines draw in, then the solid model fades in over them ----------
-let introOn = false, fillMat = null;
+let introOn = false, fillMat = null, lastFx = {bp: 0, sol: 0};
+function mixHex(a, b, t){ const A = [1,3,5].map(i => parseInt(a.slice(i,i+2),16)), B = [1,3,5].map(i => parseInt(b.slice(i,i+2),16));
+  return "#" + A.map((v,i) => Math.round(v + (B[i]-v)*t).toString(16).padStart(2,"0")).join(""); }
+function burst(small){ const p = document.getElementById("pulse"), f = document.getElementById("flash");
+  p.classList.toggle("small", !!small); [p, f].forEach(el => { el.classList.remove("go"); void el.offsetWidth; el.classList.add("go"); }); if (small) f.classList.remove("go"); }
 const fadeCache = new Map();
 const styleMat = (st, P) => st === "solid" ? P.solidMat : viewMat(st, P.tint);
 function fadeOf(m){ let c = fadeCache.get(m); if (!c) { c = m.clone(); c.transparent = true; c.userData = {base: m.transparent ? m.opacity : 1}; fadeCache.set(m, c); } return c; }
 function intro(S){
   const id = S.P.id, on = !hold && (id === "bp" || id === "sol");
-  if (!on) { if (introOn) endIntro(); return; }
+  if (!on) { if (introOn) endIntro(); lastFx = {bp: 0, sol: 0}; return; }
   introOn = true;
+  if (playing && !scrub) {
+    if (id === "bp" && lastFx.bp < .62 && S.u >= .62) burst(false);
+    if (id === "sol" && lastFx.sol < .12 && S.u >= .12) burst(true);
+  }
+  lastFx[id] = S.u;
   if (!fillMat) fillMat = new THREE.MeshBasicMaterial({color: "#141a24", transparent: true, opacity: 0, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1});
   edgeMat.transparent = true;
   if (id === "bp") {                                   // outlines appear from nothing
-    const e = clamp(S.u * 4);
+    const e = clamp(S.u * 4), land = clamp((S.u - .62) / .25);
     edgeMat.opacity = e; fillMat.opacity = .92 * e;
+    edgeMat.color.set(S.u < .62 ? "#5fe3f5" : mixHex("#ffffff", "#d6ebff", land));
     parts.forEach(P => { P.mesh.material = fillMat; P.ghost.visible = false; P.edges.visible = true; });
   } else {                                             // solid fades in, outlines fade out
     const e = ease(S.u);
     edgeMat.opacity = 1 - e; fillMat.opacity = .92 * (1 - e);
+    const glow = Math.pow(1 - clamp(S.u / .8), 2);
     parts.forEach(P => { const f = fadeOf(styleMat(view, P)); f.opacity = f.userData.base * e; f.depthWrite = e > .5;
+      if (f.emissive) { f.emissive.set("#4dd0e1"); f.emissiveIntensity = .9 * glow * e; }
       P.mesh.material = f; P.ghost.material = fillMat; P.ghost.visible = true; P.edges.visible = true; });
   }
 }
 function endIntro(){
-  introOn = false;
+  introOn = false; edgeMat.color.set("#d6ebff");
   edgeMat.opacity = 1; edgeMat.transparent = false;
   parts.forEach(P => { P.ghost.visible = false; P.edges.visible = false; });
   setView(view);
