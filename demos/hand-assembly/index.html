@@ -143,8 +143,8 @@ const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ---------- timeline (seconds) ----------
 const PH = [
-  {id:"bp",   name:"Building the model", sub:"Blueprint",                label:"Blueprint",  dur:1.5},
-  {id:"sol",  name:"Building the model", sub:"Solid model",              label:"Solid",      dur:1.3},
+  {id:"bp",   name:"Building the model", sub:"Blueprint",                label:"Blueprint",  dur:0.85},
+  {id:"sol",  name:"Building the model", sub:"Solid model",              label:"Solid",      dur:1.0},
   {id:"ex",   name:"Before assembly", sub:"Exploded view",               label:"Exploded",   dur:0.7},
   {id:"asm",  name:"Assembling",      sub:"Fingers return, servos and pulleys last",       label:"Assembly",   dur:3.0},
   {id:"spin", name:"Turntable",       sub:"One turn around its center",  label:"360°",       dur:2.6},
@@ -307,10 +307,11 @@ function impactFx(){
 function hit(I){ hits.push({t0: clock, dir: I.dir, mat: I.mat, str: I.str, ph: Math.random()*6.28}); }
 let FX = {rec: null, shake: null};
 // a = assembly progress: 0 = exploded, 1 = assembled. Running it backwards disassembles in reverse order.
-function poseParts(a, spin, assembling){
+function poseParts(a, spin, assembling, scale = 1){
   const rec = FX.rec || new THREE.Vector3();
   const G = new THREE.Matrix4().makeTranslation(rec.x, rec.y, rec.z).multiply(new THREE.Matrix4().makeTranslation(PIV.x, PIV.y, PIV.z))
     .multiply(new THREE.Matrix4().makeRotationZ(spin))
+    .multiply(new THREE.Matrix4().makeScale(scale, scale, scale))
     .multiply(new THREE.Matrix4().makeTranslation(-PIV.x, -PIV.y, -PIV.z))
     .multiply(UPRIGHT);                                               // spin about the hand's own vertical axis
   for (const P of parts) {
@@ -353,8 +354,10 @@ function phaseAt(tt){ return PH.find(p => tt < p.t1) || PH[PH.length-1]; }
 function frameState(tt){
   // returns {g (explosion 0..1 global), assembling, spin, dist, pitch}
   const P = phaseAt(tt), u = clamp((tt - P.t0) / P.dur);
-  let g = 0, assembling = true, spin = 0, dz = 1, pt = .12;
-  if (P.id === "bp" || P.id === "sol") { g = 1; dz = .9; }
+  let g = 0, assembling = true, spin = 0, dz = 1, pt = .12, scale = 1;
+  if (P.id === "bp")   { g = 1; dz = .9; const z = 1 - Math.pow(1 - clamp(u / .75), 4);     // rushes in, then settles
+                         scale = .02 + .98 * z; spin = -1.1 * Math.pow(1 - z, 2); }
+  if (P.id === "sol")  { g = 1; dz = .9; }
   if (P.id === "ex")   { g = 1; dz = .9 - .03*u; }
   if (P.id === "asm")  { g = 1 - u; dz = .9 - .02*ease(u); }
     if (P.id === "spin") { const e = SPIN(u);                                         // fast, slow, then super fast
@@ -363,7 +366,7 @@ function frameState(tt){
                          pt = .12; }
   if (P.id === "rest") { g = 0; dz = .96; }
   if (P.id === "back") { g = ease(u); assembling = false; dz = .96 - .04*ease(u); }
-  return {P, u, g, assembling, spin, dz, pt};
+  return {P, u, g, assembling, spin, dz, pt, scale};
 }
 function apply(tt){
   const S = hold === "ex" ? {P:PH.find(p => p.id === "ex"), g:1, assembling:true, spin:0, dz:.9, pt:.12}
@@ -374,7 +377,7 @@ function apply(tt){
   if (prevA !== null && S.P.id === "spin" && !hold && playing && prevSpin < Math.PI*2 - .01 && S.spin >= Math.PI*2 - .01) hit({dir: null, mat: null, str: .45});
   prevA = a; prevSpin = S.P.id === "spin" ? S.spin : 0;
   FX = impactFx();
-  poseParts(a, S.spin, S.assembling);
+  poseParts(a, S.spin, S.assembling, S.scale || 1);
   intro(S);
   const zoom = S.dz * (1 + (EX.ratio - 1) * S.g * .9);          // zoom out to fit the exploded spread
   dist += (zoom - dist) * (dist ? .12 : 1); pitch += (S.pt - pitch) * .12; camG += (S.g - camG) * (camG ? .12 : 1);
@@ -410,7 +413,7 @@ function intro(S){
   if (!fillMat) fillMat = new THREE.MeshBasicMaterial({color: "#141a24", transparent: true, opacity: 0, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1});
   edgeMat.transparent = true;
   if (id === "bp") {                                   // outlines appear from nothing
-    const e = ease(S.u);
+    const e = clamp(S.u * 4);
     edgeMat.opacity = e; fillMat.opacity = .92 * e;
     parts.forEach(P => { P.mesh.material = fillMat; P.ghost.visible = false; P.edges.visible = true; });
   } else {                                             // solid fades in, outlines fade out
