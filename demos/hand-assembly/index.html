@@ -66,6 +66,18 @@ button.on { border-color: var(--accent); background: color-mix(in srgb, var(--ac
 body.embed header, body.embed #backlink { display: none; }
 body.embed .wrap { padding-block: 4px 8px; }
 body.embed .stage { height: clamp(360px, 52vw, 600px); }
+.views { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.views-label { font: 500 11px var(--font-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .12em; margin-right: 4px; }
+.views-note { font: 400 12px var(--font-mono); color: var(--muted); margin-left: 6px; }
+.stage { transition: background .4s ease; }
+.stage.v-xray { background: radial-gradient(ellipse 60% 55% at 50% 52%, #0c1a22 0%, #05080b 70%); }
+.stage.v-blueprint { background-color: #0b2442;
+  background-image: linear-gradient(rgba(150,200,255,.09) 1px, transparent 1px), linear-gradient(90deg, rgba(150,200,255,.09) 1px, transparent 1px),
+    linear-gradient(rgba(150,200,255,.04) 1px, transparent 1px), linear-gradient(90deg, rgba(150,200,255,.04) 1px, transparent 1px);
+  background-size: 80px 80px, 80px 80px, 16px 16px, 16px 16px; }
+.stage.v-clay { background: radial-gradient(ellipse 60% 55% at 50% 50%, #2a2b2f 0%, #141518 75%); }
+.stage.v-blueprint .phase-sub, .stage.v-blueprint .cap { color: #9fc3ea; }
+.stage:not(.v-solid):not(.v-wire):not(.v-xray) .legend { display: none; }
 /* mini: only the animated hand, for the side of the project page */
 body.mini header, body.mini .controls, body.mini .facts, body.mini .legend, body.mini .cap, body.mini #backlink { display: none; }
 body.mini .wrap { padding: 0; max-width: none; gap: 0; }
@@ -108,6 +120,17 @@ body.mini .phase-sub { font-size: 10.5px; }
     <div class="track" id="track" role="slider" tabindex="0" aria-label="Animation timeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
   </div>
 
+  <div class="views" role="group" aria-label="Render style">
+    <span class="views-label">View</span>
+    <button data-view="solid" class="on" aria-pressed="true">Solid</button>
+    <button data-view="xray" aria-pressed="false">X-ray</button>
+    <button data-view="wire" aria-pressed="false">Wireframe</button>
+    <button data-view="blueprint" aria-pressed="false">Blueprint</button>
+    <button data-view="clay" aria-pressed="false">Clay</button>
+    <button data-view="normals" aria-pressed="false">Normals</button>
+    <span class="views-note" id="viewNote">Shaded CAD materials</span>
+  </div>
+
   <section class="facts" id="facts" aria-label="Parts in the assembly"></section>
 </div>
 
@@ -142,6 +165,7 @@ const D2R = Math.PI/180, FINGERS = ["thumb","index","middle","ring","pinky"];
 let renderer, scene, camera, keyLight, rimLight, V3, rotAbout, planar;
 const parts = [];      // {mesh, rest, dir, dist, delay, spinAxis, spinAng}
 const linkGroups = {};
+const VIEW_TINT = {part: "#c9cfd8"};
 const fingerMat = {}, impactsAt = [{a: .84, dir: null, mat: null, str: .6}], hits = [];
 let clock = 0, prevA = null;
 let HM = null, ready = false, C = null, R = 1, EX = {c: null, ratio: 1}, camG = 0, UPRIGHT = null, PIV = null;
@@ -200,11 +224,12 @@ async function load(){
     const pa = new Int16Array(bin, mm.pos[0], mm.pos[1]), idx = new Uint16Array(bin, mm.idx[0], mm.idx[1]), f32 = new Float32Array(pa.length);
     for (let i=0;i<pa.length;i++) f32[i] = pa[i]*HM.scale;
     const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(f32,3)); g.setIndex(new THREE.BufferAttribute(idx,1)); g.computeVertexNormals();
-    let mat = mm.role === "hw" ? MAT.hw : mm.role === "pcb" ? MAT.pcb : MAT.part, link = mm.link;
+    let mat = mm.role === "hw" ? MAT.hw : mm.role === "pcb" ? MAT.pcb : MAT.part, link = mm.link, tint = mm.role === "pcb" ? css("--pcb") : "#c9cfd8";
     if (mm.role === "motor") {
       const mi = motorMove(mm.motor), fi = mi < 5 ? mi : -1, servoBody = fi >= 0 && mm.name === "FS5115M";
       if (fi >= 0 && !servoBody) link = "pulley." + FINGERS[fi];
       mat = servoBody ? MAT.body : std(mi < 5 ? PULLEY : mi < 10 ? SERVO : WRIST);
+      tint = servoBody ? "#5a616c" : mi < 5 ? PULLEY : mi < 10 ? SERVO : WRIST;
     }
     counts[mm.role] = (counts[mm.role] || 0) + 1;
     if (mm.role === "hw") continue;                                   // screws are left out to keep the view clean
@@ -212,7 +237,7 @@ async function load(){
     // centroid of this part's vertices (model space)
     let cx=0, cy=0, cz=0, n = f32.length/3; for (let i=0;i<f32.length;i+=3){ cx+=f32[i]; cy+=f32[i+1]; cz+=f32[i+2]; }
     const group = mm.role === "motor" ? "servo" : FINGERS.includes(link.split(".")[0]) ? "finger:" + link.split(".")[0] : "fixed";
-    parts.push({mesh, link, role: mm.role, group, verts: f32, c: new THREE.Vector3(cx/n, cy/n, cz/n)});
+    parts.push({mesh, link, role: mm.role, group, tint, verts: f32, c: new THREE.Vector3(cx/n, cy/n, cz/n)});
   }
   for (const f of FINGERS) {
     const F = HM.fingers[f], K = HM.k2[f];
@@ -260,7 +285,9 @@ async function load(){
   // framing: how far the exploded parts reach from the palm compared with the assembled hand
   const reach = off => Math.max(...parts.filter(P => P.group !== "servo").map(P => P.w.clone().add(P.dir ? P.dir.clone().multiplyScalar(P.dist*off) : new THREE.Vector3()).sub(C).length()));
   EX = {c: C, ratio: reach(1) / reach(0)};
+  parts.forEach(P => P.solidMat = P.mesh.material);
   ready = true; document.getElementById("loading").hidden = true;
+  setView(view);
   buildFacts(counts);
 }
 
@@ -346,6 +373,43 @@ function apply(tt){
   dist += (zoom - dist) * (dist ? .12 : 1); pitch += (S.pt - pitch) * .12; camG += (S.g - camG) * (camG ? .12 : 1);
   return S;
 }
+
+// ---------- render styles ----------
+const VIEW_NOTE = {solid: "Shaded CAD materials", xray: "See-through: overlapping parts glow brighter", wire: "Every triangle of the mesh, colored by part type",
+  blueprint: "Feature edges on a drawing grid", clay: "One matte material, form only", normals: "Colored by surface direction"};
+let view = "solid"; if (!document.body.classList.contains("mini")) { try { const v = localStorage.getItem("ng-view"); if (VIEW_NOTE[v]) view = v; } catch (e) {} }
+const matCache = {};
+function viewMat(v, tint){
+  const key = v + tint; if (matCache[key]) return matCache[key];
+  const gray = tint === "#c9cfd8";
+  let m;
+  if (v === "xray") m = new THREE.MeshBasicMaterial({color: gray ? "#7fd8f2" : tint, transparent: true, opacity: gray ? .1 : .16, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide});
+  if (v === "wire") m = new THREE.MeshBasicMaterial({color: gray ? "#9fb0c4" : tint, wireframe: true, transparent: true, opacity: gray ? .45 : .8});
+  if (v === "blueprint") m = new THREE.MeshBasicMaterial({color: "#0d2c52", polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1});
+  if (v === "clay") m = new THREE.MeshStandardMaterial({color: "#d9d2c7", roughness: 1, metalness: 0});
+  if (v === "normals") m = new THREE.MeshNormalMaterial();
+  return matCache[key] = m;
+}
+let edgeMat = null, edgesReady = false;
+function buildEdges(){
+  edgeMat = new THREE.LineBasicMaterial({color: "#d6ebff"});
+  parts.forEach(P => { const e = new THREE.LineSegments(new THREE.EdgesGeometry(P.mesh.geometry, 30), edgeMat); e.visible = false; P.mesh.add(e); P.edges = e; });
+  edgesReady = true;
+}
+function setView(v){
+  view = v; if (!document.body.classList.contains("mini")) { try { localStorage.setItem("ng-view", v); } catch (e) {} }
+  document.querySelectorAll("[data-view]").forEach(b => { const on = b.dataset.view === v; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+  document.getElementById("viewNote").textContent = VIEW_NOTE[v];
+  const st = document.querySelector(".stage"); st.className = "stage v-" + v;
+  if (!ready) return;
+  if (v === "blueprint" && !edgesReady) {
+    const L = document.getElementById("loading"); L.textContent = "Tracing outlines…"; L.hidden = false;
+    setTimeout(() => { buildEdges(); L.hidden = true; setView("blueprint"); }, 30); return;
+  }
+  parts.forEach(P => { P.mesh.material = v === "solid" ? P.solidMat : viewMat(v, P.tint); if (P.edges) P.edges.visible = v === "blueprint"; });
+}
+document.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
+addEventListener("keydown", e => { const i = "123456".indexOf(e.key); if (i >= 0 && !e.target.closest("input,textarea")) setView(["solid","xray","wire","blueprint","clay","normals"][i]); });
 
 // ---------- UI ----------
 const track = document.getElementById("track"), segEls = [];
